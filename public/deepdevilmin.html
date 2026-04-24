@@ -1,0 +1,603 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DEALER-DXB Admin</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#0a0a0a;color:#e0e0e0;min-height:100vh}
+.login-wrap{display:flex;align-items:center;justify-content:center;min-height:100vh}
+.login-box{background:#141414;border:1px solid #222;border-radius:12px;padding:40px;width:360px}
+.login-box h1{font-size:24px;font-weight:700;margin-bottom:24px;color:#fff}
+.login-box input{width:100%;background:#0a0a0a;border:1px solid #333;border-radius:6px;padding:10px 14px;font-size:14px;color:#fff;margin-bottom:14px;outline:none}
+.login-box input:focus{border-color:#e50914}
+.login-box button{width:100%;background:#e50914;color:#fff;border:none;border-radius:6px;padding:11px;font-size:14px;font-weight:600;cursor:pointer}
+.login-box button:hover{background:#c40812}
+.login-box .err{color:#e50914;font-size:13px;margin-bottom:12px}
+.app{display:flex;min-height:100vh}
+.side{width:220px;background:#111;border-right:1px solid #1a1a1a;padding:16px 0;flex-shrink:0}
+.side h2{padding:0 20px;font-size:15px;font-weight:700;color:#e50914;margin-bottom:20px}
+.side a{display:block;padding:9px 20px;font-size:13px;color:#888;text-decoration:none;cursor:pointer;border-left:3px solid transparent}
+.side a:hover{color:#fff;background:#1a1a1a}
+.side a.active{color:#e50914;border-left-color:#e50914;background:#e50914/8}
+.main{flex:1;padding:28px 36px;overflow-y:auto;max-height:100vh}
+.main h1{font-size:22px;font-weight:700;color:#fff;margin-bottom:20px}
+.card{background:#141414;border:1px solid #222;border-radius:10px;padding:20px;margin-bottom:16px}
+.card h3{font-size:14px;font-weight:600;color:#fff;margin-bottom:14px}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{text-align:left;padding:10px 14px;font-size:11px;text-transform:uppercase;color:#666;border-bottom:1px solid #222;font-weight:600}
+td{padding:10px 14px;border-bottom:1px solid #1a1a1a}
+tr:hover{background:#1a1a1a}
+.badge{display:inline-block;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600}
+.badge.success{background:#064e2e;color:#34d399;border:1px solid #065f36}
+.badge.failed{background:#4c0519;color:#f87171;border:1px solid #6b0c22}
+.badge.admin{background:#2d1b69;color:#a78bfa;border:1px solid #3b2580}
+.badge.user{background:#1a1a1a;color:#999;border:1px solid #333}
+.badge.working{background:#064e2e;color:#34d399;border:1px solid #065f36}
+.badge.wiped{background:#431407;color:#fb923c;border:1px solid #7c2d12}
+.badge.invalid{background:#1c1c1c;color:#6b7280;border:1px solid #374151}
+.badge.unknown{background:#2d2200;color:#fbbf24;border:1px solid #78350f}
+.badge.error{background:#4c0519;color:#f87171;border:1px solid #6b0c22}
+.badge.hold{background:#2d1a00;color:#f59e0b;border:1px solid #7c4f00}
+.badge.inactive{background:#2a0a0a;color:#f87171;border:1px solid #5a1111}
+.badge.active{background:#064e2e;color:#34d399;border:1px solid #065f36}
+.badge.reset-1step{background:#0f2d4e;color:#60a5fa;border:1px solid #1e4080}
+.badge.reset-2step{background:#1a1060;color:#a78bfa;border:1px solid #3b2580}
+.btn{padding:8px 16px;border-radius:6px;font-size:13px;font-weight:600;border:none;cursor:pointer;display:inline-flex;align-items:center;gap:6px}
+.btn-red{background:#e50914;color:#fff}.btn-red:hover{background:#c40812}
+.btn-ghost{background:transparent;color:#888;border:1px solid #333}.btn-ghost:hover{color:#fff}
+.btn-sm{padding:5px 10px;font-size:12px}
+input.inp,select.inp,textarea.inp{background:#0a0a0a;border:1px solid #333;border-radius:6px;padding:8px 12px;font-size:13px;color:#fff;outline:none;width:100%}
+input.inp:focus,select.inp:focus{border-color:#e50914}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px}
+.mt{margin-top:12px}.mb{margin-bottom:12px}
+.txt-red{color:#e50914}.txt-gray{color:#888}.txt-xs{font-size:12px}.txt-mono{font-family:monospace}
+.flex{display:flex;align-items:center;gap:10px}
+.ml-auto{margin-left:auto}
+.modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.65);display:flex;align-items:center;justify-content:center;z-index:100}
+.modal{background:#141414;border:1px solid #333;border-radius:10px;padding:24px;width:380px}
+.result-box{background:#0a0a0a;border:1px solid #222;border-radius:6px;padding:12px;margin-top:8px;max-height:300px;overflow-y:auto;font-size:12px;font-family:monospace;white-space:pre-wrap;word-break:break-all;color:#ccc}
+.tabs{display:flex;gap:2px;border-bottom:1px solid #222;margin-bottom:20px}
+.tab{padding:10px 18px;font-size:13px;font-weight:500;color:#666;cursor:pointer;border-bottom:2px solid transparent}
+.tab:hover{color:#ccc}
+.tab.active{color:#e50914;border-bottom-color:#e50914}
+.status-dot{width:8px;height:8px;border-radius:50%;display:inline-block}
+.status-dot.online{background:#34d399}
+.status-dot.offline{background:#f87171}
+.status-dot.checking{background:#fbbf24}
+.hidden{display:none}
+.log-filters{display:flex;gap:10px;margin-bottom:16px;flex-wrap:wrap}
+.log-filters input,.log-filters select{max-width:200px}
+.copy-cell:hover{text-decoration:underline;color:#fff}
+.toast{position:fixed;top:20px;right:20px;background:#1a1a1a;border:1px solid #333;border-radius:8px;padding:12px 20px;font-size:13px;color:#fff;z-index:200;animation:slideIn .3s}
+@keyframes slideIn{from{transform:translateX(100px);opacity:0}to{transform:translateX(0);opacity:1}}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script>
+const $ = s => document.querySelector(s);
+const $$ = s => document.querySelectorAll(s);
+let token = localStorage.getItem('dxb_admin_token');
+let currentTab = 'users';
+let state = { users:[], settings:{}, vouchers:[], logs:[], dropletStatus:{} };
+
+async function api(path, opts={}) {
+  const headers = { 'Content-Type':'application/json', ...(opts.headers||{}) };
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+  const r = await fetch('/api' + path, { ...opts, headers });
+  if (r.status === 401 || r.status === 403) { token = null; localStorage.removeItem('dxb_admin_token'); render(); throw new Error('Unauthorized'); }
+  const data = await r.json();
+  if (!r.ok) throw new Error(data.error || 'Request failed');
+  return data;
+}
+
+function toast(msg) {
+  const d = document.createElement('div');
+  d.className = 'toast';
+  d.textContent = msg;
+  document.body.appendChild(d);
+  setTimeout(() => d.remove(), 3000);
+}
+
+function render() {
+  if (!token) return renderLogin();
+  renderApp();
+}
+
+function renderLogin() {
+  $('#root').innerHTML = `
+    <div class="login-wrap">
+      <div class="login-box">
+        <h1>DEALER-DXB Admin</h1>
+        <div class="err hidden" id="loginErr"></div>
+        <input id="loginUser" placeholder="Username" autocomplete="off">
+        <input id="loginPass" placeholder="Password" type="password">
+        <button onclick="doLogin()">Sign In</button>
+      </div>
+    </div>`;
+}
+
+async function doLogin() {
+  const username = $('#loginUser').value;
+  const password = $('#loginPass').value;
+  try {
+    const data = await fetch('/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type':'application/json' },
+      body: JSON.stringify({ username, password })
+    }).then(r => r.json());
+    if (data.error) { $('#loginErr').textContent = data.error; $('#loginErr').classList.remove('hidden'); return; }
+    if (data.user?.role !== 'admin') { $('#loginErr').textContent = 'Admin access required'; $('#loginErr').classList.remove('hidden'); return; }
+    token = data.token;
+    localStorage.setItem('dxb_admin_token', token);
+    render();
+  } catch(e) { $('#loginErr').textContent = e.message; $('#loginErr').classList.remove('hidden'); }
+}
+
+function renderApp() {
+  const tabs = [
+    {key:'users',label:'Users'},
+    {key:'settings',label:'Settings'},
+    {key:'features',label:'Droplets'},
+    {key:'vouchers',label:'Vouchers'},
+    {key:'logs',label:'Logs'},
+    {key:'search',label:'Search'},
+    {key:'shell',label:'Shell'},
+  ];
+  $('#root').innerHTML = `
+    <div class="app">
+      <div class="side">
+        <h2>DXB Admin</h2>
+        ${tabs.map(t => `<a onclick="switchTab('${t.key}')" class="${currentTab===t.key?'active':''}">${t.label}</a>`).join('')}
+        <a onclick="logout()" style="margin-top:30px;color:#e50914">Logout</a>
+      </div>
+      <div class="main" id="content"></div>
+    </div>`;
+  loadTab();
+}
+
+function switchTab(t) { currentTab = t; renderApp(); }
+function logout() { token = null; localStorage.removeItem('dxb_admin_token'); render(); }
+
+async function loadTab() {
+  const c = $('#content');
+  try {
+    if (currentTab === 'users') await renderUsers(c);
+    else if (currentTab === 'settings') await renderSettings(c);
+    else if (currentTab === 'features') await renderFeatures(c);
+    else if (currentTab === 'vouchers') await renderVouchers(c);
+    else if (currentTab === 'logs') await renderLogs(c);
+    else if (currentTab === 'search') renderSearch(c);
+    else if (currentTab === 'shell') renderShell(c);
+  } catch(e) { c.innerHTML = `<div class="txt-red">${e.message}</div>`; }
+}
+
+async function renderUsers(c) {
+  state.users = await api('/admin/users');
+  c.innerHTML = `
+    <h1>Users</h1>
+    <div class="card">
+      <h3>Create User</h3>
+      <div class="grid3">
+        <input class="inp" id="newUser" placeholder="Username">
+        <input class="inp" id="newPass" placeholder="Password" type="password">
+        <input class="inp" id="newCred" placeholder="Credits" type="number" value="0">
+      </div>
+      <button class="btn btn-red mt" onclick="createUser()">Create</button>
+    </div>
+    <div class="card" style="padding:0">
+      <table>
+        <thead><tr><th>User</th><th>Role</th><th>Credits</th><th>API Key</th><th>Joined</th><th></th></tr></thead>
+        <tbody>
+          ${state.users.map(u => `
+            <tr>
+              <td><a onclick="viewUserLogs('${u.id}')" style="color:#60a5fa;cursor:pointer">${u.username}</a></td>
+              <td><span class="badge ${u.role}">${u.role}</span></td>
+              <td><a onclick="showCreditModal('${u.id}',${u.credits})" class="txt-red" style="cursor:pointer;font-weight:600">${u.credits.toFixed(2)}</a></td>
+              <td class="txt-mono txt-xs txt-gray" style="max-width:140px;overflow:hidden;text-overflow:ellipsis">${u.apiKey||'-'}</td>
+              <td class="txt-xs txt-gray">${new Date(u.createdAt).toLocaleDateString()}</td>
+              <td>${u.role!=='admin'?`<button class="btn btn-ghost btn-sm" onclick="deleteUser('${u.id}')">Del</button>`:''}</td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    </div>`;
+}
+
+async function createUser() {
+  try {
+    await api('/admin/users', { method:'POST', body: JSON.stringify({ username:$('#newUser').value, password:$('#newPass').value, credits:parseFloat($('#newCred').value)||0 }) });
+    toast('User created');
+    loadTab();
+  } catch(e) { toast(e.message); }
+}
+
+async function deleteUser(id) {
+  if (!confirm('Delete user and all logs?')) return;
+  try { await api(`/admin/users/${id}`, {method:'DELETE'}); toast('Deleted'); loadTab(); } catch(e) { toast(e.message); }
+}
+
+function showCreditModal(id, current) {
+  const d = document.createElement('div');
+  d.className = 'modal-bg';
+  d.innerHTML = `
+    <div class="modal">
+      <h3 style="color:#fff;margin-bottom:14px">Update Credits</h3>
+      <div class="flex mb">
+        <button class="btn btn-sm btn-red" id="opSet" onclick="this.style.opacity=1;$('#opAdd').style.opacity=.5">Set</button>
+        <button class="btn btn-sm btn-ghost" id="opAdd" onclick="this.style.opacity=1;$('#opSet').style.opacity=.5">Add</button>
+      </div>
+      <input class="inp" id="credAmt" type="number" value="${current}" placeholder="Amount">
+      <div class="flex mt">
+        <button class="btn btn-red" onclick="updateCredits('${id}')">Save</button>
+        <button class="btn btn-ghost" onclick="this.closest('.modal-bg').remove()">Cancel</button>
+      </div>
+    </div>`;
+  document.body.appendChild(d);
+  d.addEventListener('click', e => { if (e.target === d) d.remove(); });
+}
+
+async function updateCredits(id) {
+  const op = $('#opAdd')?.style.opacity === '1' ? 'add' : 'set';
+  try {
+    await api(`/admin/users/${id}/credits`, { method:'PUT', body: JSON.stringify({ credits:parseFloat($('#credAmt').value)||0, operation:op }) });
+    toast('Credits updated');
+    document.querySelector('.modal-bg')?.remove();
+    loadTab();
+  } catch(e) { toast(e.message); }
+}
+
+async function viewUserLogs(userId) {
+  try {
+    const data = await api(`/admin/users/${userId}/logs`);
+    const c = $('#content');
+    c.innerHTML = `
+      <div class="flex mb">
+        <button class="btn btn-ghost" onclick="loadTab()">&larr; Back</button>
+        <h1 style="margin:0">${data.user.username}</h1>
+        <span class="txt-gray txt-xs">${data.user.role} | ${data.user.credits.toFixed(2)} credits</span>
+      </div>
+      <div class="flex mb">
+        <input class="inp" id="userLogSearch" placeholder="Search by email..." style="max-width:300px" onkeydown="if(event.key==='Enter')searchUserLogs('${userId}')">
+        <button class="btn btn-red btn-sm" onclick="searchUserLogs('${userId}')">Search</button>
+      </div>
+      <div class="txt-xs txt-gray mb">${data.logs.length} logs</div>
+      ${renderLogTable(data.logs, false)}`;
+  } catch(e) { toast(e.message); }
+}
+
+async function searchUserLogs(userId) {
+  const s = $('#userLogSearch').value;
+  try {
+    const data = await api(`/admin/users/${userId}/logs${s?'?search='+encodeURIComponent(s):''}`);
+    const tbl = document.querySelector('#content table');
+    if (tbl) tbl.outerHTML = renderLogTable(data.logs, false);
+  } catch(e) { toast(e.message); }
+}
+
+async function renderSettings(c) {
+  state.settings = await api('/admin/settings');
+  const costs = [
+    {key:'credit_cost_trigger_reset',label:'Trigger Reset (per email)'},
+    {key:'credit_cost_change_password',label:'Change Password (per url)'},
+    {key:'credit_cost_check_email',label:'Check Email (per email)'},
+    {key:'credits_per_dollar',label:'Credits per Dollar'},
+    {key:'min_credit_load',label:'Minimum Credit Load'},
+  ];
+  const conc = [
+    {key:'concurrency_trigger_reset',label:'TR Workers'},
+    {key:'concurrency_change_password',label:'CP Workers'},
+    {key:'concurrency_check_email',label:'VM Workers'},
+  ];
+  c.innerHTML = `
+    <h1>Settings</h1>
+    <div class="card">
+      <h3>Credit Costs</h3>
+      <div class="grid2">
+        ${costs.map(s => `<div><label class="txt-xs txt-gray">${s.label}</label><input class="inp mt setting-inp" data-key="${s.key}" value="${state.settings[s.key]||''}"></div>`).join('')}
+      </div>
+    </div>
+    <div class="card">
+      <h3>Concurrency</h3>
+      <div class="grid3">
+        ${conc.map(s => `<div><label class="txt-xs txt-gray">${s.label}</label><input class="inp mt setting-inp" data-key="${s.key}" type="number" value="${state.settings[s.key]||''}"></div>`).join('')}
+      </div>
+    </div>
+    <div class="card">
+      <h3>Payment</h3>
+      <label class="txt-xs txt-gray">Crypto Wallet (BEP20 USDT)</label>
+      <input class="inp mt setting-inp txt-mono" data-key="crypto_wallet" value="${state.settings.crypto_wallet||''}" placeholder="0x...">
+    </div>
+    <button class="btn btn-red" onclick="saveSettings()">Save Settings</button>`;
+}
+
+async function saveSettings() {
+  const updates = {};
+  $$('.setting-inp').forEach(el => { updates[el.dataset.key] = el.value; });
+  try { await api('/admin/settings', { method:'PUT', body:JSON.stringify(updates) }); toast('Settings saved'); } catch(e) { toast(e.message); }
+}
+
+async function renderFeatures(c) {
+  if (!state.settings.droplet_trigger_reset) state.settings = await api('/admin/settings');
+  const droplets = [
+    {key:'droplet_trigger_reset',label:'Trigger Reset',ph:'http://142.93.4.225:3000'},
+    {key:'droplet_change_password',label:'Change Password',ph:'http://159.89.172.195:3000'},
+    {key:'droplet_check_email',label:'VM Email Check',ph:'http://139.59.42.65:3000'},
+  ];
+  c.innerHTML = `
+    <h1>Droplet Endpoints</h1>
+    <div class="card">
+      ${droplets.map(d => `
+        <div class="mb" style="margin-bottom:18px">
+          <div class="flex">
+            <label class="txt-xs txt-gray">${d.label}</label>
+            <span id="ds_${d.key}" class="ml-auto"></span>
+          </div>
+          <input class="inp mt txt-mono setting-inp" data-key="${d.key}" value="${state.settings[d.key]||''}" placeholder="${d.ph}">
+        </div>
+      `).join('')}
+    </div>
+    <div class="flex">
+      <button class="btn btn-red" onclick="saveDroplets()">Save Endpoints</button>
+      <button class="btn btn-ghost" onclick="testDroplets()">Test All</button>
+    </div>
+    <div class="card mt" id="dropletLogs" style="display:none">
+      <h3>Droplet Logs</h3>
+      <div class="flex mb">
+        <button class="btn btn-sm btn-ghost" onclick="fetchDropletLogs('trigger-reset')">TR Logs</button>
+        <button class="btn btn-sm btn-ghost" onclick="fetchDropletLogs('change-password')">CP Logs</button>
+        <button class="btn btn-sm btn-ghost" onclick="fetchDropletLogs('check-email')">VM Logs</button>
+      </div>
+      <div id="dropletLogContent" class="result-box"></div>
+    </div>`;
+}
+
+async function saveDroplets() {
+  const updates = {};
+  $$('.setting-inp').forEach(el => { updates[el.dataset.key] = el.value; });
+  try { await api('/admin/settings', { method:'PUT', body:JSON.stringify(updates) }); toast('Endpoints saved'); } catch(e) { toast(e.message); }
+}
+
+async function testDroplets() {
+  const keys = ['droplet_trigger_reset','droplet_change_password','droplet_check_email'];
+  for (const key of keys) {
+    const el = $(`#ds_${key}`);
+    const url = $(`.setting-inp[data-key="${key}"]`).value;
+    if (!url) continue;
+    el.innerHTML = '<span class="status-dot checking"></span> checking';
+    try {
+      const d = await api('/admin/droplet-health', { method:'POST', body:JSON.stringify({url}) });
+      el.innerHTML = `<span class="status-dot ${d.status}"></span> ${d.status}`;
+    } catch { el.innerHTML = '<span class="status-dot offline"></span> offline'; }
+  }
+}
+
+async function fetchDropletLogs(service) {
+  $('#dropletLogs').style.display = 'block';
+  $('#dropletLogContent').textContent = 'Loading...';
+  try {
+    const data = await api(`/admin/droplet-logs?service=${service}&limit=50`);
+    $('#dropletLogContent').textContent = JSON.stringify(data, null, 2);
+  } catch(e) { $('#dropletLogContent').textContent = e.message; }
+}
+
+async function renderVouchers(c) {
+  state.vouchers = await api('/admin/vouchers');
+  c.innerHTML = `
+    <h1>Vouchers</h1>
+    <div class="card">
+      <h3>Generate</h3>
+      <div class="grid2" style="max-width:400px">
+        <div><label class="txt-xs txt-gray">Credits per voucher</label><input class="inp mt" id="vCred" type="number" placeholder="100"></div>
+        <div><label class="txt-xs txt-gray">Count</label><input class="inp mt" id="vCount" type="number" value="1"></div>
+      </div>
+      <button class="btn btn-red mt" onclick="genVouchers()">Generate</button>
+    </div>
+    <div class="card" style="padding:0">
+      <table>
+        <thead><tr><th>Code</th><th>Credits</th><th>Status</th><th>Created</th></tr></thead>
+        <tbody>
+          ${state.vouchers.map(v => `
+            <tr>
+              <td class="txt-mono" style="color:#fff">${v.code}</td>
+              <td class="txt-red" style="font-weight:600">${v.credits}</td>
+              <td><span class="badge ${v.used?'failed':'success'}">${v.used?'USED':'ACTIVE'}</span></td>
+              <td class="txt-xs txt-gray">${new Date(v.createdAt).toLocaleDateString()}</td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    </div>`;
+}
+
+async function genVouchers() {
+  try {
+    const d = await api('/admin/vouchers', { method:'POST', body:JSON.stringify({ credits:parseFloat($('#vCred').value)||0, count:parseInt($('#vCount').value)||1 }) });
+    toast(`${d.codes.length} voucher(s) generated`);
+    loadTab();
+  } catch(e) { toast(e.message); }
+}
+
+async function renderLogs(c) {
+  c.innerHTML = `
+    <h1>All Logs</h1>
+    <div class="log-filters">
+      <input class="inp" id="logSearch" placeholder="Search email..." style="max-width:200px">
+      <select class="inp" id="logType" style="max-width:150px">
+        <option value="">All Types</option>
+        <option value="trigger-reset">Trigger Reset</option>
+        <option value="change-password">Change Password</option>
+        <option value="check-email">Check Email</option>
+        <option value="signup-code">Sign-in Code</option>
+        <option value="imap-fetch">IMAP Fetch</option>
+      </select>
+      <select class="inp" id="logStatus" style="max-width:155px">
+        <option value="">All Status</option>
+        <optgroup label="── General ──">
+          <option value="success">✅ Success</option>
+          <option value="failed">❌ Failed</option>
+        </optgroup>
+        <optgroup label="── Check Email ──">
+          <option value="working">🟢 Working</option>
+          <option value="wiped">🟠 Wiped</option>
+          <option value="invalid">⚫ Invalid</option>
+          <option value="unknown">🟡 Unknown</option>
+          <option value="error">🔴 Error</option>
+        </optgroup>
+        <optgroup label="── Account ──">
+          <option value="active">🟢 Active</option>
+          <option value="hold">🟡 On Hold</option>
+          <option value="inactive">🔴 Inactive</option>
+        </optgroup>
+      </select>
+      <input class="inp" id="logUser" placeholder="Username..." style="max-width:150px">
+      <button class="btn btn-red btn-sm" onclick="searchLogs()">Search</button>
+      <button class="btn btn-ghost btn-sm" onclick="exportLogs()">Export CSV</button>
+    </div>
+    <div id="logResults">Loading...</div>`;
+  searchLogs();
+}
+
+async function searchLogs() {
+  const params = new URLSearchParams();
+  const s = $('#logSearch')?.value; if (s) params.set('search', s);
+  const t = $('#logType')?.value; if (t) params.set('type', t);
+  const st = $('#logStatus')?.value; if (st) params.set('status', st);
+  const u = $('#logUser')?.value; if (u) params.set('user', u);
+  try {
+    const logs = await api(`/admin/logs?${params.toString()}`);
+    $('#logResults').innerHTML = `<div class="txt-xs txt-gray mb">${logs.length} results</div>` + renderLogTable(logs, true);
+  } catch(e) { $('#logResults').innerHTML = `<div class="txt-red">${e.message}</div>`; }
+}
+
+function exportLogs() {
+  const params = new URLSearchParams();
+  const s = $('#logSearch')?.value; if (s) params.set('search', s);
+  const t = $('#logType')?.value; if (t) params.set('type', t);
+  const st = $('#logStatus')?.value; if (st) params.set('status', st);
+  const u = $('#logUser')?.value; if (u) params.set('user', u);
+  window.open(`/api/admin/logs/export?${params.toString()}`);
+}
+
+function copyText(txt) {
+  if (!txt) return;
+  navigator.clipboard.writeText(txt).then(() => toast('Copied: ' + txt.slice(0, 40))).catch(() => {
+    var ta = document.createElement('textarea'); ta.value = txt;
+    document.body.appendChild(ta); ta.select(); document.execCommand('copy');
+    document.body.removeChild(ta); toast('Copied!');
+  });
+}
+function getSubStatusBadge(l) {
+  var r = l.result || {};
+  if (l.type === 'trigger-reset') {
+    if (l.status === 'success') {
+      var steps = r.steps || 1;
+      var cls = steps >= 2 ? 'reset-2step' : 'reset-1step';
+      var lbl = steps >= 2 ? '2-Step Reset' : '1-Step Reset';
+      return '<span class="badge ' + cls + '">' + lbl + '</span>';
+    }
+    var det = (r.details || r.error || '');
+    if (det.indexOf('No account found') >= 0) return '<span class="badge invalid">No Account</span>';
+    if (det.indexOf('HOLD') >= 0 || det.indexOf('hold') >= 0) return '<span class="badge hold">On Hold</span>';
+    var short = det.split('|')[0].trim().slice(0, 24);
+    return short ? '<span class="badge error" style="font-size:10px">' + short + '</span>' : '<span class="badge error">Failed</span>';
+  }
+  if (l.type === 'change-password') {
+    var acc = r.account || {};
+    if (acc.onHold || acc.status === 'hold') return '<span class="badge hold">On Hold</span>';
+    if (acc.status === 'inactive') return '<span class="badge inactive">Inactive</span>';
+    if (acc.status === 'active') return '<span class="badge active">Active</span>';
+    var det2 = r.details || r.error || '';
+    if (det2.indexOf('PASSWORD_INSECURE') >= 0) return '<span class="badge error">Insecure Pwd</span>';
+    if (det2.indexOf('HOLD') >= 0) return '<span class="badge hold">On Hold</span>';
+    var s2 = det2.split(':').pop().trim().slice(0, 20);
+    return s2 ? '<span class="badge error" style="font-size:10px">' + s2 + '</span>' : '<span class="txt-gray" style="font-size:11px">—</span>';
+  }
+  return '<span class="txt-gray" style="font-size:11px">—</span>';
+}
+function renderLogTable(logs, showUser) {
+  return `<div class="card" style="padding:0;overflow-x:auto"><table>
+    <thead><tr>${showUser?'<th>User</th>':''}<th>Type</th><th>Email</th><th>Status</th><th>Sub-Status</th><th>Credits</th><th>Result</th><th>Time</th></tr></thead>
+    <tbody>
+      ${logs.map(l => `<tr>
+        ${showUser?`<td class="txt-xs">${l.username||'-'}</td>`:''}
+        <td class="txt-xs">${l.type}</td>
+        <td class="txt-xs txt-mono" style="max-width:200px;overflow:hidden;text-overflow:ellipsis;cursor:pointer" title="Click to copy" onclick="copyText('${(l.email||'').replace(/'/g,'')}')">${l.email||'-'}</td>
+        <td><span class="badge ${l.status}">${l.status}</span></td>
+        <td>${getSubStatusBadge(l)}</td>
+        <td class="txt-xs">${l.creditsUsed}</td>
+        <td><button class="btn btn-ghost btn-sm" onclick='showResult(${JSON.stringify(JSON.stringify(l.result))})'>View</button></td>
+        <td class="txt-xs txt-gray">${new Date(l.createdAt).toLocaleString()}</td>
+      </tr>`).join('')}
+    </tbody>
+  </table></div>`;
+}
+
+function showResult(jsonStr) {
+  window._lastResultJson = jsonStr;
+  window._lastResultJson = jsonStr;
+  const d = document.createElement('div');
+  d.className = 'modal-bg';
+  let formatted;
+  try { formatted = JSON.stringify(JSON.parse(jsonStr), null, 2); } catch { formatted = jsonStr; }
+  d.innerHTML = `<div class="modal" style="width:500px">
+    <h3 style="color:#fff;margin-bottom:14px">Result Detail</h3>
+    <div class="result-box">${formatted.replace(/</g,'&lt;')}</div>
+    <div class="mt flex" style="justify-content:flex-end;gap:8px">
+      <button class="btn btn-ghost btn-sm" onclick="copyText(window._lastResultJson)">Copy JSON</button>
+      <button class="btn btn-ghost btn-sm" onclick="this.closest('.modal-bg').remove()">Close</button>
+    </div>
+  </div>`;
+  document.body.appendChild(d);
+  d.addEventListener('click', e => { if (e.target === d) d.remove(); });
+}
+
+function renderSearch(c) {
+  c.innerHTML = `
+    <h1>Email Search</h1>
+    <div class="flex mb">
+      <input class="inp" id="emailSearch" placeholder="Search email across all logs..." style="max-width:400px" onkeydown="if(event.key==='Enter')doSearch()">
+      <button class="btn btn-red" onclick="doSearch()">Search</button>
+    </div>
+    <div id="searchResults"></div>`;
+}
+
+async function doSearch() {
+  const email = $('#emailSearch').value;
+  if (!email || email.length < 2) return;
+  try {
+    const results = await api(`/admin/search?email=${encodeURIComponent(email)}`);
+    $('#searchResults').innerHTML = `<div class="txt-xs txt-gray mb">${results.length} results for "${email}"</div>` + renderLogTable(results, true);
+  } catch(e) { $('#searchResults').innerHTML = `<div class="txt-red">${e.message}</div>`; }
+}
+
+function renderShell(c) {
+  c.innerHTML = `
+    <h1>Shell</h1>
+    <div class="card">
+      <textarea class="inp" id="shellCmd" rows="3" placeholder="Enter command..." style="font-family:monospace"></textarea>
+      <button class="btn btn-red mt" onclick="runShell()">Execute</button>
+    </div>
+    <div id="shellOutput" class="result-box" style="display:none;min-height:200px"></div>`;
+}
+
+async function runShell() {
+  const cmd = $('#shellCmd').value;
+  if (!cmd) return;
+  $('#shellOutput').style.display = 'block';
+  $('#shellOutput').textContent = 'Running...';
+  try {
+    const d = await api('/admin/shell', { method:'POST', body:JSON.stringify({command:cmd}) });
+    $('#shellOutput').textContent = d.output || '(no output)';
+    if (!d.success) $('#shellOutput').style.borderColor = '#e50914';
+    else $('#shellOutput').style.borderColor = '#222';
+  } catch(e) { $('#shellOutput').textContent = e.message; $('#shellOutput').style.borderColor = '#e50914'; }
+}
+
+render();
+</script>
+</body>
+</html>
