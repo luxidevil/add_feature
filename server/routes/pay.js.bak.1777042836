@@ -1,0 +1,753 @@
+const { Router } = require("express");
+const fs = require("fs");
+const path = require("path");
+const { randomIdentity, warmPool } = require("../identity");
+const { logger } = require("../lib/logger");
+
+warmPool();
+
+const router = Router();
+
+// ── HAR-style audit log for every upstream WooCommerce round-trip ───────────
+// Each /pay/session and /pay/checkout attempt produces one JSON file under
+// LOG_DIR containing a full HAR-like capture (request method/url/headers/body
+// + response status/headers/setCookie/body/timing) for every external HTTP
+// call it makes. The in-memory ring buffer at GET /api/pay/logs keeps a
+// lightweight summary; the full capture is fetched on demand from
+// GET /api/pay/logs/har/:file.  Files older than 14 days are pruned hourly.
+const LOG_DIR = path.resolve(
+  process.env.PAY_LOG_DIR ||
+  path.join(__dirname, "..", "..", "logs", "pay")
+);
+try {
+  fs.mkdirSync(LOG_DIR, { recursive: true });
+} catch (e) {
+  logger.warn({ err: e.message, dir: LOG_DIR }, "[pay] could not create HAR log dir");
+}
+
+const MAX_RESP_BODY_BYTES = 200 * 1024;            // 200 KB per response in capture
+const MAX_REQ_BODY_BYTES  = 50  * 1024;            // 50  KB per outgoing request body
+const HAR_RETENTION_MS    = 14 * 24 * 60 * 60 * 1000; // 14 days
+
+function cleanupOldHar() {
+  try {
+    const cutoff = Date.now() - HAR_RETENTION_MS;
+    for (const name of fs.readdirSync(LOG_DIR)) {
+      if (!name.endsWith(".json")) continue;
+      const full = path.join(LOG_DIR, name);
+      try {
+        const st = fs.statSync(full);
+        if (st.mtimeMs < cutoff) fs.unlinkSync(full);
+      } catch { /* ignore */ }
+    }
+  } catch { /* ignore */ }
+}
+cleanupOldHar();
+setInterval(cleanupOldHar, 60 * 60 * 1000).unref();
+
+// In-memory ring buffer (last 200 attempt summaries)
+const PAY_LOGS = [];
+const PAY_LOG_MAX = 200;
+
+function payLog(entry) {
+  PAY_LOGS.push({ ts: new Date().toISOString(), ...entry });
+  if (PAY_LOGS.length > PAY_LOG_MAX) PAY_LOGS.shift();
+}
+
+function safeSlice(s, n) {
+  if (typeof s !== "string") return s;
+  if (s.length <= n) return s;
+  return s.slice(0, n) + `\n…[truncated ${s.length - n} more bytes; total=${s.length}]`;
+}
+
+function headersToObject(h) {
+  if (!h) return {};
+  if (typeof h.entries === "function") return Object.fromEntries(h.entries());
+  return { ...h };
+}
+
+function getSetCookies(res) {
+  const raw = res.headers.raw?.()?.["set-cookie"] || res.headers.getSetCookie?.() || [];
+  return raw;
+}
+
+// captureFetch — wraps fetch() and pushes a HAR-style entry into `steps`.
+// The response body is consumed inside; callers must use the returned `body`
+// instead of calling res.text() again. On network failure throws and still
+// records the failed step in `steps`.
+async function captureFetch(steps, label, url, opts = {}) {
+  const reqBody = typeof opts.body === "string"
+    ? opts.body
+    : (opts.body == null ? null : String(opts.body));
+  const startedAt = new Date().toISOString();
+  const t0 = Date.now();
+  const reqEntry = {
+    label,
+    startedAt,
+    request: {
+      method:    (opts.method || "GET").toUpperCase(),
+      url,
+      redirect:  opts.redirect || "manual",
+      headers:   headersToObject(opts.headers),
+      bodyBytes: reqBody == null ? 0 : Buffer.byteLength(reqBody),
+      body:      reqBody == null ? null : safeSlice(reqBody, MAX_REQ_BODY_BYTES),
+    },
+  };
+
+  let res = null;
+  let body = "";
+  let networkErr = null;
+  try {
+    res  = await fetch(url, opts);
+    body = await res.text();
+  } catch (e) {
+    networkErr = e;
+  }
+  const elapsedMs = Date.now() - t0;
+
+  const respEntry = networkErr
+    ? { networkError: networkErr.message, elapsedMs }
+    : {
+        status:        res.status,
+        statusText:    res.statusText || "",
+        finalUrl:      res.url || url,
+        headers:       headersToObject(res.headers),
+        setCookie:     getSetCookies(res).map(c => c.split(";")[0]),
+        bodyBytes:     Buffer.byteLength(body),
+        bodyTruncated: body.length > MAX_RESP_BODY_BYTES,
+        body:          safeSlice(body, MAX_RESP_BODY_BYTES),
+        elapsedMs,
+      };
+
+  steps.push({ ...reqEntry, response: respEntry });
+
+  if (networkErr) {
+    const wrapped = new Error(networkErr.message);
+    wrapped.cause = networkErr;
+    wrapped.networkStep = label;
+    throw wrapped;
+  }
+  return { res, body };
+}
+
+function safeFileName(name) {
+  return String(name).replace(/[^A-Za-z0-9._-]/g, "_");
+}
+
+function savePayHar(meta, steps) {
+  const ts   = new Date().toISOString().replace(/[:.]/g, "-");
+  const sid8 = (meta.sessionId || "nosid").slice(0, 8);
+  const file = safeFileName(`${ts}_${meta.event || "evt"}_${sid8}.json`);
+  const full = path.join(LOG_DIR, file);
+  const payload = { ts: new Date().toISOString(), ...meta, stepCount: steps.length, steps };
+  try {
+    fs.writeFileSync(full, JSON.stringify(payload, null, 2), { mode: 0o600 });
+    return file;
+  } catch (e) {
+    logger.error({ err: e.message, file }, "[pay] failed to persist HAR");
+    return null;
+  }
+}
+
+// ── Endpoints ───────────────────────────────────────────────────────────────
+// GET /api/pay/logs — lightweight ring buffer (most recent first)
+router.get("/pay/logs", async (req, res) => {
+  const limit = Math.min(parseInt(req.query.limit) || 50, PAY_LOG_MAX);
+  res.json(PAY_LOGS.slice(-limit).reverse());
+});
+
+// GET /api/pay/logs/har — list available HAR capture files (most recent 100)
+router.get("/pay/logs/har", async (_req, res) => {
+  try {
+    const files = fs.readdirSync(LOG_DIR)
+      .filter(f => f.endsWith(".json"))
+      .map(f => {
+        const st = fs.statSync(path.join(LOG_DIR, f));
+        return { file: f, mtime: st.mtimeMs, sizeBytes: st.size };
+      })
+      .sort((a, b) => b.mtime - a.mtime)
+      .slice(0, 100);
+    res.json(files);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /api/pay/logs/har/:file — full HAR capture for one attempt
+router.get("/pay/logs/har/:file", async (req, res) => {
+  const name = safeFileName(req.params.file || "");
+  if (!name.endsWith(".json")) return res.status(400).json({ error: "invalid filename" });
+  const full = path.join(LOG_DIR, name);
+  if (!full.startsWith(LOG_DIR + path.sep)) return res.status(400).json({ error: "invalid path" });
+  if (!fs.existsSync(full)) return res.status(404).json({ error: "not found" });
+  try {
+    res.type("application/json").send(fs.readFileSync(full, "utf8"));
+  } catch (e) {
+    res.status(500).json({ error: "failed to read HAR: " + e.message });
+  }
+});
+
+// In-memory session store — TTL 15 minutes
+const sessions = new Map();
+const SESSION_TTL = 15 * 60 * 1000;
+
+function makeSessionId() {
+  return require("crypto").randomBytes(24).toString("hex");
+}
+
+function cleanSessions() {
+  const now = Date.now();
+  for (const [id, s] of sessions) {
+    if (now - s.createdAt > SESSION_TTL) sessions.delete(id);
+  }
+}
+
+const WC_BASE        = "https://unclejimswormfarm.com";
+const SHOP_PAGE      = `${WC_BASE}/shop/?orderby=price`;
+const CHECKOUT_PAGE  = `${WC_BASE}/checkouts/check/`;
+const STD_CHECKOUT   = `${WC_BASE}/checkout/`;
+const CHECKOUT_AJAX  = `${WC_BASE}/?wc-ajax=checkout&wfacp_id=1226456&wfacp_is_checkout_override=yes`;
+const UOR_AJAX       = `${WC_BASE}/?wc-ajax=update_order_review&wfacp_id=1226456&wfacp_is_checkout_override=yes`;
+const CART_AJAX      = `${WC_BASE}/?wc-ajax=add_to_cart`;
+const PRODUCT_ID     = "773932";
+const WFACP_POST_ID  = "1226456";
+
+const MOBILE_UA = "Mozilla/5.0 (Linux; Android 6.0; Nexus 5 Build/MRA58N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Mobile Safari/537.36";
+
+const COMMON_HEADERS = {
+  "User-Agent":      MOBILE_UA,
+  "Accept-Language": "en-US,en;q=0.9",
+  "Accept":          "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+  "sec-ch-ua":       '"Not:A-Brand";v="99", "Google Chrome";v="145", "Chromium";v="145"',
+  "sec-ch-ua-mobile":   "?1",
+  "sec-ch-ua-platform": '"Android"',
+};
+
+function extractCookies(res) {
+  const raw = res.headers.raw?.()?.["set-cookie"] || res.headers.getSetCookie?.() || [];
+  return raw.map(c => c.split(";")[0]).join("; ");
+}
+
+function mergeCookies(existing, incoming) {
+  const map = new Map();
+  for (const part of (existing + "; " + incoming).split(";")) {
+    const trimmed = part.trim();
+    if (!trimmed) continue;
+    const eq = trimmed.indexOf("=");
+    if (eq === -1) continue;
+    map.set(trimmed.slice(0, eq).trim(), trimmed);
+  }
+  return Array.from(map.values()).join("; ");
+}
+
+function extractNonce(html) {
+  const m = html.match(/["']woocommerce-process-checkout-nonce["']\s*:\s*["']([a-f0-9]+)["']/i)
+         || html.match(/woocommerce-process-checkout-nonce["']?\s+value=["']([a-f0-9]+)["']/i)
+         || html.match(/woocommerce_process_checkout.*?nonce.*?["']([a-f0-9]{10})["']/is);
+  return m ? m[1] : null;
+}
+
+function extractSecurityNonce(html) {
+  const m = html.match(/["']security["']\s*:\s*["']([a-f0-9]+)["']/i)
+         || html.match(/woocommerce_params.*?["']security["']\s*:\s*["']([a-f0-9]+)["']/is)
+         || html.match(/update_order_review_nonce["']\s*:\s*["']([a-f0-9]+)["']/i)
+         || html.match(/"nonce"\s*:\s*"([a-f0-9]{10})"/);
+  return m ? m[1] : null;
+}
+
+function extractBraintreeToken(html) {
+  const patterns = [
+    /wc_braintree_client_token\s*=\s*\[["']([A-Za-z0-9+/=._-]{40,})["']/,
+    /client_token["']\s*:\s*["']([A-Za-z0-9+/=._-]{40,})["']/,
+    /clientToken["']\s*:\s*["']([A-Za-z0-9+/=._-]{40,})["']/,
+    /authorization["']\s*:\s*["']([A-Za-z0-9+/=._-]{40,})["']/,
+    /data-client-token=["']([A-Za-z0-9+/=._-]{40,})["']/,
+  ];
+  for (const p of patterns) {
+    const m = html.match(p);
+    if (m) return m[1];
+  }
+  return null;
+}
+
+function extractBraintreeConfig(html) {
+  const m = html.match(/braintree_cc_config_data["']?\s*:\s*(\{.+?\}(?=\s*[,}]))/s)
+          || html.match(/config_data["']?\s*:\s*JSON\.parse\(decodeURIComponent\(['"](.+?)['"]\)\)/);
+  if (m) {
+    try { return JSON.parse(m[1]); } catch { return null; }
+  }
+  return null;
+}
+
+function buildBraintreeConfigData(clientToken) {
+  if (!clientToken) return "";
+  try {
+    let decoded;
+    if (clientToken.includes(".")) {
+      const payload = JSON.parse(Buffer.from(clientToken.split(".")[1], "base64").toString("utf8"));
+      decoded = payload;
+    } else {
+      decoded = JSON.parse(Buffer.from(clientToken, "base64").toString("utf8"));
+    }
+    const merchantId = decoded.merchant || decoded.sub || decoded.merchantId;
+    const env = decoded.environment || "production";
+    const clientApiUrl = decoded.clientApiUrl || `https://api.braintreegateway.com:443/merchants/${merchantId}/client_api`;
+    const assetsUrl = decoded.assetsUrl || "https://assets.braintreegateway.com";
+    return JSON.stringify({
+      environment:  env,
+      clientApiUrl,
+      assetsUrl,
+      analytics: { url: `https://client-analytics.braintreegateway.com/${merchantId}` },
+    });
+  } catch {
+    return "";
+  }
+}
+
+// ─── GET /api/pay/identity ────────────────────────────────────────────────────
+router.get("/pay/identity", async (_req, res) => {
+  try {
+    const id = await randomIdentity();
+    res.json(id);
+  } catch (e) {
+    logger.error({ err: e.message }, "[pay] identity generation failed");
+    res.status(503).json({ error: e.message });
+  }
+});
+
+// ─── GET /api/pay/session ─────────────────────────────────────────────────────
+router.get("/pay/session", async (req, res) => {
+  cleanSessions();
+  const sessionStartTime = new Date().toISOString().replace("T", " ").slice(0, 19);
+  const t0 = Date.now();
+  const steps = [];
+
+  logger.info("[pay/session] starting new checkout session");
+
+  try {
+    // Step 1: Add product to cart
+    logger.info({ url: CART_AJAX }, "[pay/session] step1: add_to_cart");
+    let cartResp, cartRawText;
+    try {
+      ({ res: cartResp, body: cartRawText } = await captureFetch(steps, "add_to_cart", CART_AJAX, {
+        method: "POST",
+        headers: {
+          ...COMMON_HEADERS,
+          "Content-Type":     "application/x-www-form-urlencoded; charset=UTF-8",
+          "X-Requested-With": "XMLHttpRequest",
+          "Accept":           "application/json, text/javascript, */*; q=0.01",
+          "Referer":          SHOP_PAGE,
+          "Origin":           WC_BASE,
+          "sec-fetch-dest":   "empty",
+          "sec-fetch-mode":   "cors",
+          "sec-fetch-site":   "same-origin",
+        },
+        body: `success_message=%E2%80%9CPumpkins%2C+Jack+O%E2%80%99Lantern+(100+days)%E2%80%9D+has+been+added+to+your+cart&product_sku=&product_id=${PRODUCT_ID}&quantity=1`,
+      }));
+    } catch (fetchErr) {
+      const msg = `step1 add_to_cart network error: ${fetchErr.message}`;
+      logger.error({ err: fetchErr.message }, `[pay/session] ${msg}`);
+      const harFile = savePayHar({ event: "session_fail", step: "add_to_cart", error: msg, sessionStartTime }, steps);
+      payLog({ event: "session_fail", step: "add_to_cart", error: msg, harFile });
+      return res.status(502).json({ error: "Failed to initialize payment session: " + fetchErr.message });
+    }
+
+    logger.info({ status: cartResp.status }, "[pay/session] step1: add_to_cart response");
+
+    let cookies = extractCookies(cartResp);
+    let bwfanCartId = "";
+    const bm = cartRawText.match(/bwfan_cart_id['":\s]+(\d+)/);
+    if (bm) bwfanCartId = bm[1];
+    logger.info({ bwfanCartId: bwfanCartId || "(none)", cookieCount: cookies.split(";").filter(Boolean).length }, "[pay/session] step1 complete");
+
+    // Step 2: Visit checkout page
+    logger.info({ url: CHECKOUT_PAGE }, "[pay/session] step2: GET checkout page");
+    let pageResp, pageHtml;
+    try {
+      ({ res: pageResp, body: pageHtml } = await captureFetch(steps, "checkout_page", CHECKOUT_PAGE, {
+        method: "GET",
+        headers: { ...COMMON_HEADERS, Cookie: cookies, Referer: SHOP_PAGE, "sec-fetch-dest": "document", "sec-fetch-mode": "navigate", "sec-fetch-site": "same-origin" },
+        redirect: "follow",
+      }));
+    } catch (fetchErr) {
+      const msg = `step2 checkout page network error: ${fetchErr.message}`;
+      logger.error({ err: fetchErr.message }, `[pay/session] ${msg}`);
+      const harFile = savePayHar({ event: "session_fail", step: "checkout_page_fetch", error: msg, sessionStartTime }, steps);
+      payLog({ event: "session_fail", step: "checkout_page_fetch", error: msg, harFile });
+      return res.status(502).json({ error: "Failed to initialize payment session: " + fetchErr.message });
+    }
+
+    logger.info({ status: pageResp.status, finalUrl: pageResp.url }, "[pay/session] step2: checkout page response");
+
+    cookies = mergeCookies(cookies, extractCookies(pageResp));
+
+    const nonce         = extractNonce(pageHtml);
+    const securityNonce = extractSecurityNonce(pageHtml);
+    const clientToken   = extractBraintreeToken(pageHtml);
+    const btConfig      = extractBraintreeConfig(pageHtml);
+
+    logger.info({
+      htmlBytes:      pageHtml.length,
+      nonceFound:     !!nonce,
+      securityNonce:  !!securityNonce,
+      clientToken:    !!clientToken,
+      btConfig:       !!btConfig,
+      nonce:          nonce || "MISSING",
+    }, "[pay/session] step2: nonces & token extracted");
+
+    if (!nonce) {
+      logger.warn({ htmlSnippet: pageHtml.slice(0, 500) }, "[pay/session] WARNING: checkout nonce not found in page HTML");
+      payLog({ event: "session_warn", step: "nonce_missing", htmlBytes: pageHtml.length, htmlSnippet: pageHtml.slice(0, 300) });
+    }
+    if (!clientToken) {
+      logger.warn({ htmlSnippet: pageHtml.slice(0, 500) }, "[pay/session] WARNING: Braintree client token not found in page HTML");
+      payLog({ event: "session_warn", step: "token_missing", htmlBytes: pageHtml.length });
+    }
+
+    // Step 3: Fire initial update_order_review
+    // IMPORTANT: WooCommerce/WFOnePage Checkout returns 403 if country is empty.
+    // Pre-populate with US + a NY ZIP from our identity pool to match the resident profile.
+    if (securityNonce) {
+      logger.info("[pay/session] step3: firing initial update_order_review (US/NY pre-fill)");
+      const uorPost = new URLSearchParams({
+        security:       securityNonce,
+        payment_method: "braintree_cc",
+        country: "US", state: "NY", postcode: "10003", city: "", address: "", address_2: "",
+        s_country: "US", s_state: "NY", s_postcode: "10003", s_city: "", s_address: "", s_address_2: "",
+        has_full_address: "false",
+        post_data: `_wfacp_post_id=${WFACP_POST_ID}&wfacp_cart_hash=&wfacp_has_active_multi_checkout=&wfacp_source=${encodeURIComponent(CHECKOUT_PAGE)}&product_switcher_need_refresh=0&wfacp_cart_contains_subscription=0&wfacp_exchange_keys=${encodeURIComponent(JSON.stringify({ pre_built: {}, elementor: { wfacp_form: "6bd44386", wfacp_form_summary: "122408a" } }))}&billing_email=`,
+      });
+      try {
+        const { res: uorResp, body: uorBody } = await captureFetch(steps, "update_order_review_initial", UOR_AJAX, {
+          method: "POST",
+          headers: {
+            ...COMMON_HEADERS,
+            "Content-Type":     "application/x-www-form-urlencoded; charset=UTF-8",
+            "X-Requested-With": "XMLHttpRequest",
+            "Accept":           "application/json, text/javascript, */*; q=0.01",
+            "Referer":          CHECKOUT_PAGE,
+            "Origin":           WC_BASE,
+            "Cookie":           cookies,
+            "sec-fetch-dest":   "empty",
+            "sec-fetch-mode":   "cors",
+            "sec-fetch-site":   "same-origin",
+          },
+          body: uorPost.toString(),
+        });
+        logger.info({
+          status: uorResp.status,
+          bodyBytes: uorBody.length,
+          bodySnippet: uorBody.slice(0, 300),
+        }, "[pay/session] step3: update_order_review response");
+        if (uorResp.status >= 400) {
+          payLog({ event: "session_warn", step: "uor_http_error", status: uorResp.status, bodySnippet: uorBody.slice(0, 300) });
+        }
+      } catch (uorErr) {
+        logger.warn({ err: uorErr.message }, "[pay/session] step3: update_order_review failed (non-fatal)");
+      }
+    } else {
+      logger.warn("[pay/session] step3: skipping update_order_review — securityNonce missing");
+      payLog({ event: "session_warn", step: "security_nonce_missing" });
+    }
+
+    const sessionId = makeSessionId();
+    sessions.set(sessionId, {
+      cookies,
+      nonce,
+      securityNonce,
+      bwfanCartId,
+      sessionStartTime,
+      clientToken,
+      createdAt: Date.now(),
+      used: false,
+    });
+
+    const elapsed = Date.now() - t0;
+    logger.info({ sessionId: sessionId.slice(0, 8) + "…", elapsed, nonceFound: !!nonce, tokenFound: !!clientToken }, "[pay/session] session ready");
+    const harFile = savePayHar({
+      event: "session_ok",
+      sessionId,
+      sessionStartTime,
+      elapsed,
+      nonceFound: !!nonce,
+      tokenFound: !!clientToken,
+      bwfanCartId,
+    }, steps);
+    payLog({ event: "session_ok", sessionId: sessionId.slice(0, 8) + "…", elapsed, nonceFound: !!nonce, tokenFound: !!clientToken, harFile });
+
+    res.json({
+      sessionId,
+      clientToken,
+      braintreeConfig: btConfig,
+      merchantId:  "zgmjz6bk4shsk2zd",
+      nonceFound:  !!nonce,
+      tokenFound:  !!clientToken,
+    });
+  } catch (err) {
+    logger.error({ err: err.message, stack: err.stack }, "[pay/session] unexpected failure");
+    const harFile = savePayHar({ event: "session_fail", error: err.message, stack: err.stack, sessionStartTime }, steps);
+    payLog({ event: "session_fail", error: err.message, stack: err.stack, harFile });
+    res.status(502).json({ error: "Failed to initialize payment session: " + err.message });
+  }
+});
+
+// ─── POST /api/pay/checkout ───────────────────────────────────────────────────
+router.post("/pay/checkout", async (req, res) => {
+  const {
+    sessionId,
+    paymentNonce,
+    braintreeConfigData = "",
+    billing_first_name = "",
+    billing_last_name  = "",
+    billing_email      = "",
+    billing_phone      = "",
+    billing_address_1  = "",
+    billing_city       = "",
+    billing_postcode   = "",
+    billing_country    = "US",
+    billing_state      = "",
+  } = req.body;
+
+  const t0 = Date.now();
+  const steps = [];
+  const logCtx = { email: billing_email, state: billing_state, zip: billing_postcode };
+
+  logger.info(logCtx, "[pay/checkout] attempt started");
+
+  if (!sessionId || !paymentNonce) {
+    logger.warn(logCtx, "[pay/checkout] missing sessionId or paymentNonce");
+    return res.status(400).json({ error: "sessionId and paymentNonce are required" });
+  }
+
+  const session = sessions.get(sessionId);
+  if (!session) {
+    logger.warn({ sessionId: sessionId.slice(0, 8) + "…" }, "[pay/checkout] session not found (expired?)");
+    const harFile = savePayHar({ event: "checkout_fail", sessionId, error: "session_not_found", ...logCtx }, steps);
+    payLog({ event: "checkout_fail", ...logCtx, error: "session_not_found", harFile });
+    return res.status(400).json({ error: "Session expired or invalid. Please refresh and try again." });
+  }
+  if (session.used) {
+    logger.warn(logCtx, "[pay/checkout] session already used");
+    const harFile = savePayHar({ event: "checkout_fail", sessionId, error: "session_already_used", ...logCtx }, steps);
+    payLog({ event: "checkout_fail", ...logCtx, error: "session_already_used", harFile });
+    return res.status(400).json({ error: "This payment session has already been used." });
+  }
+  if (Date.now() - session.createdAt > SESSION_TTL) {
+    sessions.delete(sessionId);
+    logger.warn(logCtx, "[pay/checkout] session expired (TTL exceeded)");
+    const harFile = savePayHar({ event: "checkout_fail", sessionId, error: "session_expired", ...logCtx }, steps);
+    payLog({ event: "checkout_fail", ...logCtx, error: "session_expired", harFile });
+    return res.status(400).json({ error: "Session expired. Please refresh and try again." });
+  }
+
+  logger.info({
+    ...logCtx,
+    nonceInSession: !!session.nonce,
+    securityNonce:  !!session.securityNonce,
+    clientToken:    !!session.clientToken,
+    bwfanCartId:    session.bwfanCartId || "(none)",
+    sessionAgeSecs: Math.floor((Date.now() - session.createdAt) / 1000),
+  }, "[pay/checkout] session loaded");
+
+  const { cookies, nonce, securityNonce, bwfanCartId, sessionStartTime } = session;
+
+  // Fire final update_order_review with full address
+  if (securityNonce) {
+    logger.info(logCtx, "[pay/checkout] firing final update_order_review");
+    const uorFinal = new URLSearchParams({
+      security:         securityNonce,
+      payment_method:   "braintree_cc",
+      country:          billing_country,
+      state:            billing_state,
+      postcode:         billing_postcode,
+      city:             billing_city,
+      address:          billing_address_1,
+      address_2:        "",
+      s_country:        billing_country,
+      s_state:          billing_state,
+      s_postcode:       billing_postcode,
+      s_city:           billing_city,
+      s_address:        billing_address_1,
+      s_address_2:      "",
+      has_full_address: "true",
+      post_data: `_wfacp_post_id=${WFACP_POST_ID}&wfacp_cart_hash=&wfacp_has_active_multi_checkout=&wfacp_source=${encodeURIComponent(CHECKOUT_PAGE)}&product_switcher_need_refresh=1&wfacp_cart_contains_subscription=0&wfacp_exchange_keys=${encodeURIComponent(JSON.stringify({ pre_built: {}, elementor: { wfacp_form: "6bd44386", wfacp_form_summary: "122408a" } }))}&billing_email=${encodeURIComponent(billing_email)}`,
+    });
+    try {
+      const { res: uorResp, body: uorBody } = await captureFetch(steps, "update_order_review_final", UOR_AJAX, {
+        method: "POST",
+        headers: {
+          ...COMMON_HEADERS,
+          "Content-Type":     "application/x-www-form-urlencoded; charset=UTF-8",
+          "X-Requested-With": "XMLHttpRequest",
+          "Accept":           "application/json, text/javascript, */*; q=0.01",
+          "Referer":          CHECKOUT_PAGE,
+          "Origin":           WC_BASE,
+          "Cookie":           cookies,
+          "sec-fetch-dest":   "empty",
+          "sec-fetch-mode":   "cors",
+          "sec-fetch-site":   "same-origin",
+        },
+        body: uorFinal.toString(),
+      });
+      logger.info({ status: uorResp.status, bodySnippet: uorBody.slice(0, 200) }, "[pay/checkout] final update_order_review done");
+    } catch (uorErr) {
+      logger.warn({ err: uorErr.message }, "[pay/checkout] final update_order_review failed (non-fatal)");
+    }
+  } else {
+    logger.warn(logCtx, "[pay/checkout] WARNING: no securityNonce — skipping update_order_review (checkout may fail)");
+    payLog({ event: "checkout_warn", ...logCtx, warning: "no_security_nonce" });
+  }
+
+  const configDataStr = braintreeConfigData || buildBraintreeConfigData(session.clientToken) || "";
+  logger.info({ configDataLen: configDataStr.length, source: braintreeConfigData ? "client" : (session.clientToken ? "server-built" : "EMPTY") }, "[pay/checkout] braintree config data");
+
+  const params = new URLSearchParams({
+    _wfacp_post_id:                         WFACP_POST_ID,
+    wfacp_cart_hash:                        "",
+    wfacp_has_active_multi_checkout:        "",
+    wfacp_source:                           CHECKOUT_PAGE,
+    product_switcher_need_refresh:          "1",
+    wfacp_cart_contains_subscription:       "0",
+    wfacp_exchange_keys:                    JSON.stringify({ pre_built: {}, elementor: { wfacp_form: "6bd44386", wfacp_form_summary: "122408a" } }),
+    wfacp_input_hidden_data:                "{}",
+    wfacp_input_phone_field:                JSON.stringify({ billing: { code: "1", number: billing_phone, hidden: "no" }, shipping: { code: "", number: "", hidden: "" } }),
+    wfacp_timezone:                         "America/New_York",
+    wc_order_attribution_source_type:       "typein",
+    wc_order_attribution_referrer:          "(none)",
+    wc_order_attribution_utm_campaign:      "(none)",
+    wc_order_attribution_utm_source:        "(direct)",
+    wc_order_attribution_utm_medium:        "(none)",
+    wc_order_attribution_utm_content:       "(none)",
+    wc_order_attribution_utm_id:            "(none)",
+    wc_order_attribution_utm_term:          "(none)",
+    wc_order_attribution_utm_source_platform:       "(none)",
+    wc_order_attribution_utm_creative_format:        "(none)",
+    wc_order_attribution_utm_marketing_tactic:       "(none)",
+    wc_order_attribution_session_entry:     `${WC_BASE}/cart/`,
+    wc_order_attribution_session_start_time: sessionStartTime,
+    wc_order_attribution_session_pages:     "4",
+    wc_order_attribution_session_count:     "1",
+    wc_order_attribution_user_agent:        MOBILE_UA,
+    wfacp_billing_same_as_shipping:         "0",
+    wfacp_billing_address_present:          "yes",
+    wfob_input_hidden_data:                 "{}",
+    wfob_input_bump_shown_ids:              "1227685",
+    wfob_input_bump_global_data:            "",
+    billing_email,
+    ...(bwfanCartId ? { bwfan_cart_id: bwfanCartId } : {}),
+    account_username:                       "",
+    account_password:                       "",
+    billing_first_name,
+    billing_last_name,
+    shipping_first_name:                    billing_first_name,
+    shipping_last_name:                     billing_last_name,
+    shipping_address_1:                     billing_address_1,
+    shipping_city:                          billing_city,
+    shipping_postcode:                      billing_postcode,
+    shipping_country:                       billing_country,
+    shipping_state:                         billing_state,
+    billing_address_1,
+    billing_city,
+    billing_postcode,
+    billing_country,
+    billing_state,
+    billing_phone,
+    order_comments:                         "",
+    wfacp_coupon_field:                     "",
+    ff24ee9:  "0",
+    fdfab6b:  "0",
+    ffa01ab:  "0",
+    ec52b7f:  "0",
+    bd79828:  "0",
+    payment_method:                         "braintree_cc",
+    braintree_cc_nonce_key:                 paymentNonce,
+    braintree_cc_device_data:               "",
+    braintree_cc_3ds_nonce_key:             "",
+    braintree_cc_config_data:               configDataStr,
+    stripe_applepay_token_key:              "",
+    stripe_applepay_payment_intent_key:     "",
+    stripe_googlepay_token_key:             "",
+    stripe_googlepay_payment_intent_key:    "",
+    stripe_payment_request_token_key:       "",
+    stripe_payment_request_payment_intent_key: "",
+    ppcp_paypal_order_id:                   "",
+    ppcp_payment_token:                     "",
+    ppcp_billing_token:                     "",
+    bwfan_user_consent:                     "1",
+    "woocommerce-process-checkout-nonce":   nonce || "",
+    _wp_http_referer:                       `/?wc-ajax=update_order_review&wfacp_id=${WFACP_POST_ID}&wfacp_is_checkout_override=yes`,
+    wfacp_subscription_gifting:             "",
+    billing_address_2:                      "",
+    shipping_address_2:                     "",
+    ship_to_different_address:              "on",
+  });
+
+  try {
+    logger.info({ ...logCtx, checkoutUrl: CHECKOUT_AJAX, noncePresent: !!nonce }, "[pay/checkout] submitting to WooCommerce");
+
+    const { res: checkoutResp, body: rawBody } = await captureFetch(steps, "checkout_submit", CHECKOUT_AJAX, {
+      method: "POST",
+      headers: {
+        ...COMMON_HEADERS,
+        "Content-Type":     "application/x-www-form-urlencoded; charset=UTF-8",
+        "X-Requested-With": "XMLHttpRequest",
+        "Accept":           "application/json, text/javascript, */*; q=0.01",
+        "Referer":          STD_CHECKOUT,
+        "Origin":           WC_BASE,
+        "Cookie":           cookies,
+        "sec-fetch-dest":   "empty",
+        "sec-fetch-mode":   "cors",
+        "sec-fetch-site":   "same-origin",
+      },
+      body: params.toString(),
+    });
+
+    const elapsed = Date.now() - t0;
+
+    logger.info({ ...logCtx, httpStatus: checkoutResp.status, bodyBytes: rawBody.length, elapsed }, "[pay/checkout] WooCommerce response received");
+
+    // Log the full raw body for debugging (truncated to 2000 chars)
+    logger.info({ ...logCtx, rawBody: rawBody.slice(0, 2000) }, "[pay/checkout] WooCommerce raw response body");
+
+    // Try to parse as JSON
+    let data;
+    try {
+      data = JSON.parse(rawBody);
+    } catch (parseErr) {
+      const errMsg = "WooCommerce returned non-JSON response";
+      logger.error({ ...logCtx, httpStatus: checkoutResp.status, rawBody: rawBody.slice(0, 1000), parseErr: parseErr.message }, `[pay/checkout] ${errMsg}`);
+      const harFile = savePayHar({ event: "checkout_fail", sessionId, error: errMsg, httpStatus: checkoutResp.status, elapsed, ...logCtx }, steps);
+      payLog({ event: "checkout_fail", ...logCtx, error: errMsg, httpStatus: checkoutResp.status, rawBody: rawBody.slice(0, 500), elapsed, harFile });
+      return res.status(502).json({ error: errMsg + ". Check server logs for details." });
+    }
+
+    if (data.result === "success") {
+      session.used = true;
+      const orderIdMatch = (data.redirect || "").match(/order_id=(\d+)/);
+      const orderId = orderIdMatch ? orderIdMatch[1] : null;
+      logger.info({ ...logCtx, orderId, elapsed }, "[pay/checkout] SUCCESS");
+      const harFile = savePayHar({ event: "checkout_success", sessionId, orderId, elapsed, ...logCtx }, steps);
+      payLog({ event: "checkout_success", ...logCtx, orderId, elapsed, harFile });
+      return res.json({ success: true, orderId, redirect: data.redirect, messages: data.messages });
+    }
+
+    // Payment declined or WooCommerce error
+    const errText = typeof data.messages === "string"
+      ? data.messages.replace(/<[^>]+>/g, "").trim()
+      : (data.message || JSON.stringify(data));
+
+    logger.warn({ ...logCtx, result: data.result, messages: data.messages, message: data.message, fullData: data, elapsed }, "[pay/checkout] DECLINED or WC error");
+    const harFile = savePayHar({ event: "checkout_declined", sessionId, result: data.result, error: errText, rawData: data, elapsed, ...logCtx }, steps);
+    payLog({ event: "checkout_declined", ...logCtx, result: data.result, error: errText, rawData: data, elapsed, harFile });
+
+    return res.status(402).json({ success: false, error: errText, raw: data });
+  } catch (err) {
+    const elapsed = Date.now() - t0;
+    logger.error({ ...logCtx, err: err.message, stack: err.stack, elapsed }, "[pay/checkout] unexpected failure");
+    const harFile = savePayHar({ event: "checkout_fail", sessionId, error: err.message, stack: err.stack, elapsed, ...logCtx }, steps);
+    payLog({ event: "checkout_fail", ...logCtx, error: err.message, stack: err.stack, elapsed, harFile });
+    res.status(502).json({ error: "Checkout failed: " + err.message });
+  }
+});
+
+module.exports = router;
