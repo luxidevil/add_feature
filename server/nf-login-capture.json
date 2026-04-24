@@ -1,0 +1,193 @@
+{
+  "summary": "Playwright Netflix login test - Direct connection",
+  "result": "BLOCKED by Netflix IP detection",
+  "findings": [
+    "Real Chromium browser launched successfully",
+    "reCAPTCHA Enterprise loaded and executed (17 requests, token len=2361)",
+    "Netflix form filled and submitted via real browser click",
+    "GraphQL CLCSScreenUpdate fired with valid captcha token",
+    "Netflix returned: Something went wrong. Please try again in a few minutes.",
+    "Same error with: CapSolver v2, v2 Enterprise, v3 Enterprise, Playwright real browser",
+    "Same error from: Direct IP, Thai residential proxy",
+    "CONCLUSION: Netflix blocks ALL data center/cloud IPs from login API regardless of captcha validity"
+  ],
+  "captured_gql": [
+    {
+      "operation": "CLCSScreenUpdate",
+      "status": 200,
+      "headers": {
+        "x-netflix.request.id": "9ab0a2effe604f16a36ee89f225557d2",
+        "x-netflix.context.operation-name": "CLCSScreenUpdate",
+        "x-netflix.request.originating.url": "https://www.netflix.com/in/login?serverState=%7B%22realm%22%3A%22growth%22%2C%22name%22%3A%22IDENTIFICATION%22%2C%22clcsSessionId%22%3A%22a8412070-00ec-4ab4-91c1-0b4cc97c6501%22%2C%22sessionContext%22%3A%7B%22session-breadcrumbs%22%3A%7B%22funnel_name%22%3A%22loginWeb%22%7D%7D%7D",
+        "x-netflix.context.app-version": "veb187882",
+        "x-netflix.context.hawkins-version": "5.16.0",
+        "x-netflix.request.clcs.bucket": "high",
+        "x-netflix.context.locales": "en-in",
+        "x-netflix.context.ui-flavor": "akira",
+        "x-netflix.request.toplevel.uuid": "497f290d-eba6-4031-8787-857d39557772",
+        "x-netflix.request.attempt": "1",
+        "x-netflix.request.client.context": "{\"appstate\":\"foreground\"}"
+      },
+      "inputFields": [
+        {
+          "name": "userLoginId",
+          "value": "ca958t@arp1it.club"
+        },
+        {
+          "name": "countryCode",
+          "value": "91"
+        },
+        {
+          "name": "countryIsoCode",
+          "value": "IN"
+        },
+        {
+          "name": "recaptchaResponseTime",
+          "value": 255
+        },
+        {
+          "name": "recaptchaResponseToken",
+          "value": "len=2361"
+        }
+      ],
+      "serverScreenUpdate": {
+        "realm": "custom",
+        "name": "growthProcessLogin",
+        "metadata": {
+          "recaptchaSiteKey": "6Lf8hrcUAAAAAIpQAFW2VFjtiYnThOjZOA5xvLyR"
+        },
+        "loggingAction": "Submitted",
+        "loggingCommand": "SubmitCommand",
+        "referrerRenditionId": "2e0ec462-3fdd-4297-8f91-da05251b43d8"
+      },
+      "extensions": {
+        "persistedQuery": {
+          "id": "7650136b-e65e-4975-9a13-9ce38d1d525f",
+          "version": 102
+        }
+      },
+      "serverState": {
+        "realm": "growth",
+        "name": "IDENTIFICATION",
+        "clcsSessionId": "a8412070-00ec-4ab4-91c1-0b4cc97c6501",
+        "sessionContext": {
+          "session-breadcrumbs": {
+            "funnel_name": "loginWeb"
+          }
+        }
+      }
+    }
+  ],
+  "recaptcha_requests": [
+    {
+      "method": "GET",
+      "url": "https://www.google.com/recaptcha/enterprise.js?render=6Lf8hrcUAAAAAIpQAFW2VFjtiYnThOjZOA5xvLyR"
+    },
+    {
+      "method": "GET",
+      "url": "https://www.gstatic.com/recaptcha/releases/kUYUkUlSyqkjTSMaN2w3RaOh/recaptcha__en.js"
+    },
+    {
+      "method": "GET",
+      "url": "https://www.google.com/recaptcha/enterprise/anchor?ar=1&k=6Lf8hrcUAAAAAIpQAFW2VFjtiYnThOjZOA5xvLyR&co=aHR0cHM6Ly93d3cubmV0ZmxpeC5jb206NDQz&hl=en&v=kUYUkUlSyqkjTSMaN2w3RaOh&size=invisible&anchor-ms=20000&execute-ms=30000&cb=m6pc3olyx876"
+    },
+    {
+      "method": "GET",
+      "url": "https://www.gstatic.com/recaptcha/releases/kUYUkUlSyqkjTSMaN2w3RaOh/styles__ltr.css"
+    },
+    {
+      "method": "GET",
+      "url": "https://www.gstatic.com/recaptcha/releases/kUYUkUlSyqkjTSMaN2w3RaOh/recaptcha__en.js"
+    },
+    {
+      "method": "GET",
+      "url": "https://www.google.com/recaptcha/enterprise/webworker.js?hl=en&v=kUYUkUlSyqkjTSMaN2w3RaOh"
+    },
+    {
+      "method": "GET",
+      "url": "https://www.gstatic.com/recaptcha/api2/logo_48.png"
+    },
+    {
+      "method": "GET",
+      "url": "https://www.gstatic.com/recaptcha/releases/kUYUkUlSyqkjTSMaN2w3RaOh/recaptcha__en.js"
+    },
+    {
+      "method": "POST",
+      "url": "https://www.google.com/recaptcha/enterprise/reload?k=6Lf8hrcUAAAAAIpQAFW2VFjtiYnThOjZOA5xvLyR"
+    },
+    {
+      "method": "POST",
+      "url": "https://www.google.com/recaptcha/enterprise/clr?k=6Lf8hrcUAAAAAIpQAFW2VFjtiYnThOjZOA5xvLyR"
+    },
+    {
+      "method": "POST",
+      "url": "https://www.google.com/recaptcha/enterprise/bcn?k=6Lf8hrcUAAAAAIpQAFW2VFjtiYnThOjZOA5xvLyR"
+    },
+    {
+      "method": "GET",
+      "url": "https://www.google.com/recaptcha/enterprise/anchor?ar=1&k=6Lf8hrcUAAAAAIpQAFW2VFjtiYnThOjZOA5xvLyR&co=aHR0cHM6Ly93d3cubmV0ZmxpeC5jb206NDQz&hl=en&v=kUYUkUlSyqkjTSMaN2w3RaOh&size=invisible&anchor-ms=20000&execute-ms=30000&cb=6aqcddq2s30n"
+    },
+    {
+      "method": "GET",
+      "url": "https://www.gstatic.com/recaptcha/releases/kUYUkUlSyqkjTSMaN2w3RaOh/styles__ltr.css"
+    },
+    {
+      "method": "GET",
+      "url": "https://www.gstatic.com/recaptcha/releases/kUYUkUlSyqkjTSMaN2w3RaOh/recaptcha__en.js"
+    },
+    {
+      "method": "GET",
+      "url": "https://www.google.com/recaptcha/enterprise/webworker.js?hl=en&v=kUYUkUlSyqkjTSMaN2w3RaOh"
+    },
+    {
+      "method": "GET",
+      "url": "https://www.gstatic.com/recaptcha/api2/logo_48.png"
+    },
+    {
+      "method": "GET",
+      "url": "https://www.gstatic.com/recaptcha/releases/kUYUkUlSyqkjTSMaN2w3RaOh/recaptcha__en.js"
+    }
+  ],
+  "cookies": [
+    {
+      "name": "_GRECAPTCHA",
+      "domain": "www.google.com"
+    },
+    {
+      "name": "flwssn",
+      "domain": ".netflix.com"
+    },
+    {
+      "name": "nfvdid",
+      "domain": ".netflix.com"
+    },
+    {
+      "name": "gsid",
+      "domain": ".netflix.com"
+    },
+    {
+      "name": "OTSessionTracking",
+      "domain": "www.netflix.com"
+    },
+    {
+      "name": "OptanonConsent",
+      "domain": ".netflix.com"
+    },
+    {
+      "name": "netflix-sans-normal-3-loaded",
+      "domain": ".netflix.com"
+    },
+    {
+      "name": "netflix-sans-bold-3-loaded",
+      "domain": ".netflix.com"
+    },
+    {
+      "name": "SecureNetflixId",
+      "domain": ".netflix.com"
+    },
+    {
+      "name": "NetflixId",
+      "domain": ".netflix.com"
+    }
+  ]
+}
